@@ -15,7 +15,26 @@ GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / 'config.json'
 REPO_CONFIG_FILE = Path('.headerize.config')
 GITIGNORE_FILE = Path('.gitignore')
 
-# --- FILE TYPE MAPPINGS (Unchanged) ---
+# --- EXCLUSION LISTS ---
+# Comprehensive list of folders/patterns that should never be modified.
+EXCLUDE_FOLDERS = [
+    '.git', '.svn', '.hg', 
+    'node_modules', 'vendor', 'target', 'build', 'dist', 'bin', 'out', 
+    '.idea', '.vscode', '__pycache__', 'venv', '.*', 'coverage', 'docs' # Added docs
+]
+EXCLUDE_FILE_PATTERNS = [
+    # General files
+    '*.log', '*.dat', '*.bak', '*.zip', '*.rar', '*.tar', '*.gz', 
+    '*.iml', '*.swp', '*~',
+    # System/IDE files
+    '.DS_Store', 'Thumbs.db', '.Spotlight-V100', 
+    # Compiled/Binary files
+    '*.pyc', '*.class', '*.o', '*.a', '*.so', '*.dll', '*.exe', '*.bin',
+    # **NEW REQUIREMENT: Exclude all dotfiles**
+    '.*'
+]
+
+# --- FILE TYPE MAPPINGS ---
 # Maps extension to (line_comment, block_start, block_end, shebang_template)
 FILE_TYPE_MAP: Dict[str, Tuple[str, str, str, Optional[str]]] = {
     # Scripts
@@ -35,12 +54,12 @@ FILE_TYPE_MAP: Dict[str, Tuple[str, str, str, Optional[str]]] = {
     '.js': ('//', '/*', '*/', None),
     '.ts': ('//', '/*', '*/', None),
     # Web/Markup
-    '.html': ('', None),
-    '.xml': ('', None),
-    '.md': ('', None),
     '.yaml': ('#', '#', '#', None),
     '.yml': ('#', '#', '#', None),
 }
+
+SKIP_FILE_SIGNAL: Tuple[None, None, None, None] = (None, None, None, None) 
+
 
 # --- UTILITIES ---
 
@@ -53,13 +72,26 @@ def find_git_root(path: Path) -> Optional[Path]:
         current = current.parent
     return None
 
-def get_comment_style(filepath: Path) -> Tuple[str, str, str, Optional[str]]:
-    """Determines the comment style and shebang based on file extension."""
+def get_comment_style(filepath: Path) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """
+    Determines the comment style and shebang based on file extension.
+    Returns SKIP_FILE_SIGNAL if the file should be ignored.
+    """
     ext = filepath.suffix.lower()
-    # Default to generic line comment if unknown
-    return FILE_TYPE_MAP.get(ext, ('#', '#', '#', None))
 
-# --- CONFIGURATION MANAGEMENT ---
+    # Check for files without an extension (like 'README' or 'LICENSE')
+    if not ext and filepath.name.count('.') == 0:
+        # Whitelist common files without extensions to use '#' comment style
+        if filepath.name.upper() in ('README', 'LICENSE', 'INSTALL', 'MAKEFILE'):
+            return ('#', '#', '#', None)
+        
+        # Files without extensions that are not whitelisted are ignored
+        return SKIP_FILE_SIGNAL
+
+    # Use the .get() method with SKIP_FILE_SIGNAL as the default fallback
+    return FILE_TYPE_MAP.get(ext, SKIP_FILE_SIGNAL)
+
+# --- CONFIGURATION MANAGEMENT (No changes) ---
 
 def _init_global_config() -> Dict[str, Any]:
     """Initializes global config if it doesn't exist. Now only prompts for company name."""
@@ -69,7 +101,6 @@ def _init_global_config() -> Dict[str, Any]:
     # 1. Prompt for Default Company
     print("\n--- Default Company Setup ---")
     company_name = input("Enter the name for your default company/profile (e.g., Acme Corp): ").strip()
-    # We no longer prompt for copyright text, as it is derived from the company name
     author_name = input("Enter your default Author Name: ").strip()
     author_email = input("Enter your default Author Email: ").strip()
 
@@ -77,7 +108,7 @@ def _init_global_config() -> Dict[str, Any]:
         "default_company": company_name,
         "profiles": {
             company_name: {
-                "company_name": company_name, # Storing company name explicitly
+                "company_name": company_name,
                 "default_author_name": author_name,
                 "default_author_email": author_email
             }
@@ -130,13 +161,12 @@ def _init_repo_config(git_root: Path, global_config: Dict[str, Any]) -> Dict[str
         default_key = global_config['default_company']
         default_profile = profiles[default_key]
         
-        # Must prompt for Author/Email if not linked to a saved profile
         repo_config = {
             "company_name": input("Enter Company Name for Copyright: ").strip(),
             "author_name": input(f"Enter Author Name (Default: {default_profile['default_author_name']}): ") or default_profile['default_author_name'],
             "author_email": input(f"Enter Author Email (Default: {default_profile['default_author_email']}): ") or default_profile['default_author_email'],
         }
-        return repo_config # Do not save .headerize.config or update global
+        return repo_config 
 
     elif selected_key == "Add New Company":
         print("\n--- New Company Profile Setup ---")
@@ -144,7 +174,6 @@ def _init_repo_config(git_root: Path, global_config: Dict[str, Any]) -> Dict[str
         author_name = input("Enter Author Name: ").strip()
         author_email = input("Enter Author Email: ").strip()
 
-        # Update Global Config
         profiles[new_company_name] = {
             "company_name": new_company_name,
             "default_author_name": author_name,
@@ -154,13 +183,12 @@ def _init_repo_config(git_root: Path, global_config: Dict[str, Any]) -> Dict[str
             json.dump(global_config, f, indent=2)
         print(f"✅ New company '{new_company_name}' added to global config.")
 
-        # Create Repo Config
         repo_config = {
             "company_name": new_company_name,
             "author_name": author_name,
             "author_email": author_email,
         }
-    else: # Existing Company Selected: Use defaults and do not prompt
+    else: 
         profile = profiles[selected_key]
         print(f"Selected existing profile: **{selected_key}**")
         
@@ -170,14 +198,12 @@ def _init_repo_config(git_root: Path, global_config: Dict[str, Any]) -> Dict[str
             "author_email": profile['default_author_email'],
         }
     
-    # --- Shared Saving Logic for Git Repos (Not "Continue Without Company") ---
+    # --- Shared Saving Logic for Git Repos ---
     
-    # 2. Save Repo Config
     with open(repo_config_path, 'w') as f:
         json.dump(repo_config, f, indent=2)
     print(f"✅ Repository config saved to {REPO_CONFIG_FILE}. **Do not check this file into Git.**")
 
-    # 3. Update .gitignore
     gitignore_path = git_root / GITIGNORE_FILE
     if gitignore_path.exists():
         with open(gitignore_path, 'r') as f:
@@ -185,9 +211,7 @@ def _init_repo_config(git_root: Path, global_config: Dict[str, Any]) -> Dict[str
         if REPO_CONFIG_FILE.name not in content:
             with open(gitignore_path, 'a') as f:
                 f.write(f"\n# Ignore headerize private config\n{REPO_CONFIG_FILE.name}\n")
-            # print(f"✅ Added {REPO_CONFIG_FILE.name} to {GITIGNORE_FILE}.") # Commented for cleaner output
 
-    # 4. Create COPYRIGHT.md
     copyright_md_path = git_root / 'COPYRIGHT.md'
     copyright_text = f"Copyright (c) {date.today().year} {repo_config['company_name']}. All rights reserved."
     if not copyright_md_path.exists():
@@ -220,18 +244,16 @@ def get_config(filepath: Path) -> Dict[str, str]:
             "author_email": profile['default_author_email'],
         }
 
-# --- HEADER GENERATION ---
+# --- HEADER GENERATION (No changes) ---
 
 def generate_header(filepath: Path, config: Dict[str, str], description: str = "A brief description of the file's purpose.") -> str:
     """Generates the boilerplate header string with standardized copyright."""
-    line_c, block_start, block_end, shebang_template = get_comment_style(filepath)
+    line_c, block_start, block_end, _ = get_comment_style(filepath)
 
     current_year = date.today().year
     
-    # **STANDARD COPYRIGHT FORMAT**
     copyright_line = f"Copyright (c) {current_year} {config['company_name']}. All rights reserved."
 
-    # 1. Format the core content
     header_content = [
         f"Copyright: {copyright_line}",
         f"Author: {config['author_name']} <{config['author_email']}>",
@@ -239,30 +261,30 @@ def generate_header(filepath: Path, config: Dict[str, str], description: str = "
         f"Description: {description}",
     ]
 
-    # 2. Apply comment styling
-    if block_start == line_c:
-        # Line comments only (e.g., # or //)
+    if block_start == line_c and block_start is not None:
         header_lines = [f"{line_c} {line}" for line in header_content]
         header_lines.insert(0, line_c)
         header_lines.append(line_c)
         header_text = "\n".join(header_lines) + "\n"
-    else:
-        # Block comments (e.g., /* */ or """ """)
+    elif block_start is not None and block_end is not None:
         padded_content = "\n".join([f" {line}" for line in header_content])
         header_text = f"{block_start}\n{padded_content}\n{block_end}\n"
+    else:
+        sys.stderr.write(f"Warning: Invalid comment style for {filepath.suffix}. Defaulting to Python docstring.\n")
+        header_text = '"""\n' + '\n'.join([f" {line}" for line in header_content]) + '\n"""\n'
     
     return header_text
 
-# --- APPLICATION CORE (No changes needed here) ---
+# --- APPLICATION CORE ---
 
 def process_file(filepath: Path, config: Dict[str, str]):
     """Checks file, inserts header if absent, handling shebang."""
     if not filepath.is_file():
         return
 
-    # Skip files that are likely config/data and not source code
-    if filepath.name.startswith('.') or filepath.suffix.lower() in (
-        '.json', '.log', '.png', '.jpg', '.gif', '.zip', '.gitignore', ''):
+    # Check the file type logic before opening the file
+    comment_style = get_comment_style(filepath)
+    if comment_style == SKIP_FILE_SIGNAL:
         return
 
     try:
@@ -272,7 +294,7 @@ def process_file(filepath: Path, config: Dict[str, str]):
         print(f"⚠️ Could not read {filepath}: {e}")
         return
 
-    # Check for existing header (simple check: look for 'Copyright' in the first 10 lines)
+    # Check for existing header
     header_found = any('copyright' in line.lower() for line in lines[:10])
 
     if header_found:
@@ -290,14 +312,11 @@ def process_file(filepath: Path, config: Dict[str, str]):
         shebang_line = lines[0]
         content_start_index = 1
     
-    line_c, _, _, shebang_template = get_comment_style(filepath)
+    line_c, _, _, shebang_template = comment_style
     
-    # Insert shebang if missing and template exists
     if not shebang_line and shebang_template:
-        # Insert generic shebang for the filetype
         new_content = [f"{shebang_template}\n", header_block] + lines
     else:
-        # Shebang exists OR no shebang required, insert header after existing shebang (if any)
         new_content = lines[:content_start_index] + [header_block] + lines[content_start_index:]
 
     # Write the file
@@ -316,38 +335,82 @@ def main():
     args = parser.parse_args()
     
     if args.filetype:
-        # Mode: Print header to stdout
+        # Mode: Print header to stdout (Vim Plugin Mode)
         filepath_dummy = Path(args.filetype)
+        
+        # Must check for dotfiles here, as the full exclusion list is only processed in the batch mode below.
+        if filepath_dummy.name.startswith('.'):
+            return
+
+        if get_comment_style(filepath_dummy) == SKIP_FILE_SIGNAL:
+            return 
+
         try:
-            # Get config based on the current directory, but don't require file existence
             config = get_config(Path.cwd() / args.filetype) 
             header = generate_header(filepath_dummy, config)
             sys.stdout.write(header)
             return
+        except EOFError:
+            sys.stderr.write("Configuration Error: Please run 'headerize.py' manually in your terminal to complete the setup for this project/repo.\n")
+            sys.exit(1)
         except Exception as e:
             sys.stderr.write(f"Error generating header: {e}\n")
             sys.exit(1)
 
-    # Mode: Process file(s) in path
+    # Mode: Process file(s) in path (Interactive/Batch Mode)
     target_path = Path(args.path)
     if not target_path.exists():
         print(f"Error: Path not found: {args.path}")
         sys.exit(1)
 
     try:
-        # Load configuration once based on the execution path
         config = get_config(target_path) 
+    except EOFError:
+        print("🚨 Configuration setup required. Please complete the interactive prompts above.")
+        sys.exit(1)
     except Exception as e:
         print(f"🚨 Configuration Error: {e}")
         sys.exit(1)
 
     if target_path.is_file():
+        # Check exclusions even for single file mode
+        if any(Path(target_path.name).match(pattern) for pattern in EXCLUDE_FILE_PATTERNS):
+            print(f"➖ Ignoring {target_path}: Matches exclusion pattern.")
+            return
+
+        if any(folder in target_path.parts for folder in EXCLUDE_FOLDERS):
+            print(f"➖ Ignoring {target_path}: Located in an excluded folder.")
+            return
+
         process_file(target_path, config)
+        
+    # ... (inside the main function) ...
     elif target_path.is_dir():
         print(f"🔍 Processing directory: {target_path}")
+
+        # Get the absolute path of the directory we are processing to check for top-level exclusions
+        abs_target_path = target_path.resolve()
+
         for filepath in target_path.rglob('*'):
-            if filepath.is_file():
-                process_file(filepath, config)
+            if not filepath.is_file():
+                continue
+
+            # --- FULL EXCLUSION LOGIC ---
+
+            # 1. Check for Excluded Folders (Checks if the absolute path contains any excluded folder part)
+            # This is the most reliable way to catch e.g., /project/repo/.venv/file.py
+            filepath_parts = [p.lower() for p in filepath.parts]
+            if any(folder.lower() in filepath_parts for folder in EXCLUDE_FOLDERS):
+                continue
+
+            # 2. Check for Excluded File Patterns (Dotfiles, compiled, etc.)
+            filename = filepath.name
+            if any(Path(filename).match(pattern) for pattern in EXCLUDE_FILE_PATTERNS):
+                continue
+
+            # 3. Process file only if it passed all exclusions
+            process_file(filepath, config)
+# ...
 
 
 if __name__ == "__main__":
