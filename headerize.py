@@ -1,3 +1,4 @@
+#!env python3
 import argparse
 import json
 import os
@@ -23,6 +24,8 @@ FILE_TYPE_MAP: Dict[str, Tuple[str, str, str, Optional[str]]] = {
     '.bash': ('#', '#', '#', '#!/usr/bin/env bash'),
     # C-like languages
     '.c': ('//', '/*', '*/', None),
+    '.bsv': ('//', '/*', '*/', None),
+    '.rs': ('//', '/*', '*/', None),
     '.cpp': ('//', '/*', '*/', None),
     '.h': ('//', '/*', '*/', None),
     '.hpp': ('//', '/*', '*/', None),
